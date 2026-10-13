@@ -7,3 +7,5 @@ private/
 *.tsbuildinfo
 *.xlsx
 *.zip
+supabase/.temp/
+__pycache__/

@@ -1,6 +1,6 @@
 'use client';
 
-import {useCallback,useEffect,useMemo,useState} from 'react';
+import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {FormEvent,ReactNode} from 'react';
 import {BarChart3,CalendarDays,Check,ChevronLeft,ChevronRight,Church as ChurchIcon,ClipboardCheck,Download,HeartHandshake,Home,LogOut,Plus,Search,Settings,Users,X,ArrowUpRight,CheckCircle2,AlertCircle,LoaderCircle,Link as LinkIcon} from 'lucide-react';
 import {db,configured} from '@/lib/supabase';
@@ -12,7 +12,27 @@ type Note={id:number;kind:string;detail:string;church_id:string};
 type Audit={id:number;entity:string;action:string;created_at:string;actor_id:string;entity_id:string};
 async function allRows<T>(table:string):Promise<T[]>{const rows:T[]=[];for(let from=0;;from+=1000){const {data,error}=await db.from(table).select('*').order(table==='attendance'?'meeting_id':'id').order(table==='attendance'?'member_id':'id').range(from,from+999);if(error)throw error;rows.push(...data as T[]);if(data.length<1000)return rows}}
 function Field({label,children}:{label:string;children:ReactNode}){return <label className="field"><span>{label}</span>{children}</label>}
-function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){useEffect(()=>{const old=document.body.style.overflow;document.body.style.overflow='hidden';const key=(e:KeyboardEvent)=>{if(e.key==='Escape')onClose()};document.addEventListener('keydown',key);return()=>{document.body.style.overflow=old;document.removeEventListener('keydown',key)}},[onClose]);return <div className="overlay" onClick={onClose}><section role="dialog" aria-modal="true" aria-label={title} className="modal" onClick={e=>e.stopPropagation()}><div className="section-head"><h2>{title}</h2><button autoFocus className="icon-button" onClick={onClose} aria-label="Cerrar"><X size={20}/></button></div>{children}</section></div>}
+function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){
+ const dialog=useRef<HTMLElement>(null),close=useRef(onClose);
+ useEffect(()=>{close.current=onClose},[onClose]);
+ useEffect(()=>{
+  const old=document.body.style.overflow,previous=document.activeElement as HTMLElement|null;
+  document.body.style.overflow='hidden';
+  dialog.current?.querySelector<HTMLElement>('button')?.focus();
+  const key=(e:KeyboardEvent)=>{
+   if(e.key==='Escape'){e.preventDefault();close.current();return}
+   if(e.key!=='Tab')return;
+   const items=Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]')||[]);
+   const first=items[0],last=items.at(-1);
+   if(!first){e.preventDefault();return}
+   if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}
+   else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}
+  };
+  document.addEventListener('keydown',key);
+  return()=>{document.body.style.overflow=old;document.removeEventListener('keydown',key);previous?.focus()};
+ },[]);
+ return <div className="overlay" onClick={onClose}><section ref={dialog} role="dialog" aria-modal="true" aria-label={title} className="modal" onClick={e=>e.stopPropagation()}><div className="section-head"><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Cerrar"><X size={20}/></button></div>{children}</section></div>;
+}
 function Empty({children}:{children:ReactNode}){return <div className="empty"><ClipboardCheck size={32}/><p>{children}</p></div>}
 
 export default function CongregationApp(){
@@ -42,7 +62,8 @@ export default function CongregationApp(){
   const {data:{subscription}}=db.auth.onAuthStateChange(event=>{if(event==='PASSWORD_RECOVERY')setAuthMode('password');if(event==='SIGNED_OUT'){setProfile(null);setMembers([]);setMeetings([]);setMarks([]);setUsers([]);setNotes([]);setAudit([])}});
   return()=>{live=false;subscription.unsubscribe()};
  },[refresh]);
- useEffect(()=>{setSearch('');setFilter('all');setSelected(null)},[churchId,tab]);
+ useEffect(()=>{setSearch('');setFilter('all')},[churchId,tab]);
+ useEffect(()=>{setSelected(null)},[churchId]);
  async function run(fn:()=>Promise<void>){if(busy)return;setBusy(true);setError('');setNotice('');try{await fn()}catch(e){setError(e instanceof Error?e.message:(e as {message?:string})?.message||String(e))}finally{setBusy(false)}}
  async function command(action:string,payload:unknown){const {data,error}=await db.rpc('command',{action,payload});if(error)throw error;return data}
  async function mutate(action:string,payload:unknown,message:string){await command(action,payload);await refresh();setNotice(message)}
@@ -63,8 +84,8 @@ export default function CongregationApp(){
  if(!ready)return <main className="loading"><HeartHandshake size={40}/><p>Preparando tu congregación…</p></main>;
  if(!profile||authMode==='password')return <main className="auth-shell"><div className="auth-story"><div className="brand"><HeartHandshake size={32}/> congrega<span>ASISTENCIA</span></div><div><p className="eyebrow">CERCA DE CADA PERSONA</p><h1>Una comunidad.<br/>Cada persona cuenta.</h1><p>Un espacio sencillo para registrar, acompañar<br/>y conocer mejor a nuestra congregación.</p></div><span>Maipú & Cerrillos · Hecho para estar cerca</span></div><section className="auth-card"><div className="auth-mark"><HeartHandshake size={32}/></div><p className="eyebrow">BIENVENIDO A CONGREGA</p><h1>{authMode==='password'?'Crea tu contraseña':authMode==='recover'?'Recuperar acceso':'Qué bueno verte'}</h1><p className="muted">{authMode==='password'?'Usa al menos 10 caracteres para proteger tu cuenta.':'Ingresa con la cuenta que te asignó Coordinación.'}</p><form onSubmit={login}>{authMode!=='password'&&<Field label="Correo electrónico"><input required type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.cl"/></Field>}{authMode!=='recover'&&<Field label="Contraseña"><input required minLength={authMode==='password'?10:1} type="password" autoComplete={authMode==='password'?'new-password':'current-password'} value={password} onChange={e=>setPassword(e.target.value)}/></Field>}<button className="primary full" disabled={busy}>{busy?<LoaderCircle className="spin" size={18}/>:null}{authMode==='password'?'Guardar contraseña':authMode==='recover'?'Enviar enlace':'Ingresar'}<ArrowUpRight size={18}/></button></form>{authMode!=='password'&&<button className="text-button full" onClick={()=>{setAuthMode(authMode==='login'?'recover':'login');setError('');setNotice('')}}>{authMode==='login'?'Olvidé mi contraseña':'Volver al inicio de sesión'}</button>}<p className="auth-foot">Acceso privado · Solo por invitación</p></section>{toast}</main>;
  const nav=[{id:'home',label:'Inicio',icon:Home},{id:'attendance',label:'Asistencia',icon:ClipboardCheck},{id:'members',label:'Miembros',icon:Users},...(coordinator?[{id:'reports',label:'Reportes',icon:BarChart3},{id:'settings',label:'Gestión',icon:Settings}]:[])];
- const openMeeting=(m:Meeting)=>{setTab('attendance');setTimeout(()=>setSelected(m.id),0)};
- const createMeeting=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);await run(async()=>{const m=await command('create_meeting',{church_id:churchId,date:f.get('date'),slot:Number(f.get('slot')),title:f.get('title')});await refresh();setNewMeeting(false);setTab('attendance');setTimeout(()=>setSelected(m.id),0);setNotice('Reunión creada. Ya puedes tomar asistencia.')})};
+ const openMeeting=(m:Meeting)=>{setTab('attendance');setSelected(m.id)};
+ const createMeeting=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);await run(async()=>{const m=await command('create_meeting',{church_id:churchId,date:f.get('date'),slot:Number(f.get('slot')),title:f.get('title')});await refresh();setNewMeeting(false);setTab('attendance');setSelected(m.id);setNotice('Reunión creada. Ya puedes tomar asistencia.')})};
  const saveMember=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);await run(async()=>{await mutate('save_member',{...Object.fromEntries(f),id:editMember?.id||null,church_id:churchId,active:editMember?.id?f.get('active')==='true':true},'Ficha guardada');setEditMember(null)})};
  async function exportReport(){await run(async()=>{const ExcelJS=await import('exceljs');const wb=new ExcelJS.Workbook();wb.creator='Congrega';wb.created=new Date();
  const summary=wb.addWorksheet('Resumen');summary.addRows([['CONGREGA · REPORTE DE ASISTENCIA'],['Iglesia',both?'Maipú y Cerrillos':church?.name],['Desde',start],['Hasta',end],['Reuniones cerradas',report.services],['Asistencias de miembros',report.present],['Visitas registradas',report.visitors],['Reuniones sin dato de visitas',report.visitorsUnknown],['Promedio asistentes',report.services?(report.present+report.visitors)/report.services:0],['Participación',report.total?report.present/report.total:null],['Reuniones excluidas',report.excluded],[],['Método','Solo reuniones cerradas. Cada persona cuenta sobre su lista histórica. Sin registro y canceladas se excluyen.'],['Identidad','Revisar fichas con nombres variantes antes de interpretar el historial individual.']]);summary.getCell('B10').numFmt='0.0%';
